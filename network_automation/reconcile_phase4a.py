@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from desired_state import load_phase4a_desired_state
+from network_automation.desired_state import load_phase4a_desired_state
 
 
 def _normalize_line(line: str) -> str:
@@ -10,6 +10,7 @@ def _normalize_line(line: str) -> str:
 
 
 def parse_running_config(text: str) -> dict:
+    """Parse the IOS interface, VRF and BGP subset used by customer reconciliation."""
     state = {
         "interfaces": {},
         "vrfs": {},
@@ -149,6 +150,7 @@ def parse_running_config(text: str) -> dict:
 
 
 def render_reconcile_commands(router_name: str, desired: dict, current: dict) -> list[str]:
+    """Return commands for managed customer differences, or an empty list when aligned."""
     role = desired["role"]
     lines = ["configure terminal"]
     changed = False
@@ -179,7 +181,7 @@ def _interface_needs_reset(current_interface: dict | None, desired_interface: di
 def _interface_matches(current_interface: dict | None, desired_interface: dict) -> bool:
     if current_interface is None:
         return False
-    return all(
+    return not current_interface.get("shutdown", False) and all(
         current_interface.get(key) == desired_interface.get(key)
         for key in ("description", "vrf", "ip", "mask")
     )
@@ -247,11 +249,7 @@ def _reconcile_pe(lines: list[str], desired: dict, current: dict) -> bool:
 
     bgp_changed = False
     desired_vrf_names = set(desired["bgp_vrfs"])
-    current_vrf_af_names = {
-        af_name.split()[-1]
-        for af_name in current_afs
-        if af_name.startswith("ipv4 vrf ")
-    }
+    current_vrf_af_names = {af_name.split()[-1] for af_name in current_afs if af_name.startswith("ipv4 vrf ")}
     bgp_lines = [f"router bgp {desired['bgp_as']}"]
 
     for vrf_name in sorted(current_vrf_af_names - desired_vrf_names):
@@ -390,7 +388,9 @@ def _reconcile_ce(lines: list[str], desired: dict, current: dict) -> bool:
     af_lines = [" address-family ipv4"]
     af_changed = False
 
-    for neighbor_ip in sorted(set(current_neighbor_map) - ({desired_neighbor_ip} if desired_neighbor_ip else set())):
+    for neighbor_ip in sorted(
+        set(current_neighbor_map) - ({desired_neighbor_ip} if desired_neighbor_ip else set())
+    ):
         af_lines.append(f"  no neighbor {neighbor_ip}")
         af_changed = True
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from config_common import (
+from network_automation.config_common import (
     get_ce_loopbacks,
     get_customer_lans,
     get_pe_ce_allocations,
@@ -16,6 +16,7 @@ def _sorted_networks(entries: list[tuple[str, str]]) -> list[dict[str, str]]:
 
 
 def build_phase4a_desired_state(intent: dict) -> dict[str, dict]:
+    """Derive the PE/CE customer resources managed by partial reconciliation."""
     customer_lans = get_customer_lans(intent)
     ce_loopbacks = get_ce_loopbacks(intent)
     pe_ce_allocations = get_pe_ce_allocations(intent)

@@ -2,9 +2,8 @@ import ipaddress
 import json
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parent
-INTENT_PATH = ROOT / "intent.json"
+ROOT = Path(__file__).resolve().parents[1]
+INTENT_PATH = ROOT / "configs" / "intent.json"
 GENERATED_DIR = ROOT / "generated_configs"
 VISUALIZATION_INTENT_PATH = ROOT / "intent_visualization.json"
 
@@ -15,6 +14,7 @@ def load_json(path: Path) -> dict:
 
 
 def load_intent() -> dict:
+    """Load the repository's lab intent, independent of the shell directory."""
     return load_json(INTENT_PATH)
 
 
@@ -29,9 +29,7 @@ def allocate_subnets(pool: str, new_prefix: int, count: int) -> list[ipaddress.I
     network = ipaddress.ip_network(pool)
     subnets = list(network.subnets(new_prefix=new_prefix))
     if len(subnets) < count:
-        raise ValueError(
-            f"Pool {pool} is too small: need {count} /{new_prefix} subnets, got {len(subnets)}"
-        )
+        raise ValueError(f"Pool {pool} is too small: need {count} /{new_prefix} subnets, got {len(subnets)}")
     return subnets[:count]
 
 
@@ -156,17 +154,13 @@ def provider_routers(intent: dict) -> list[str]:
 
 def pe_routers(intent: dict) -> list[str]:
     return [
-        router_name
-        for router_name, router_data in intent["routeurs"].items()
-        if router_data["role"] == "PE"
+        router_name for router_name, router_data in intent["routeurs"].items() if router_data["role"] == "PE"
     ]
 
 
 def ce_routers(intent: dict) -> list[str]:
     return [
-        router_name
-        for router_name, router_data in intent["routeurs"].items()
-        if router_data["role"] == "CE"
+        router_name for router_name, router_data in intent["routeurs"].items() if router_data["role"] == "CE"
     ]
 
 
@@ -196,7 +190,8 @@ def add_interface_block(
 
 
 def write_router_configs(configs: dict[str, list[str]], output_dir: Path, suffix: str) -> None:
-    output_dir.mkdir(exist_ok=True)
+    """Write one IOS command file per router for a generation phase."""
+    output_dir.mkdir(parents=True, exist_ok=True)
     for router_name, lines in sorted(configs.items()):
         path = output_dir / f"{router_name}_{suffix}.cfg"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
