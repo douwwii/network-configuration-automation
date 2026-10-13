@@ -1,203 +1,135 @@
-# NAS Project
-## Correspondance avec les attendus
+# Network Configuration Automation
 
-### Phase 0
+Python automation for an academic Cisco IOS MPLS L3VPN lab in GNS3. A JSON intent describes the topology, addressing and customer services. The tool generates router configurations, deploys them through GNS3 Telnet consoles, and partially reconciles customer configuration with the running state.
 
-Implémenté :
-- adressage IPv4 des interfaces core
-- loopbacks provider
-- OSPF
-- `router-id` OSPF
+## Project Overview
 
-### Phase 1
+The supplied lab has four provider routers (`PE1–P1–P2–PE2`) and four customer edge routers, with two customer VRFs. Configuration generation works offline; deployment requires a running GNS3 lab and compatible IOS images.
 
-Implémenté :
-- `ip cef`
-- MPLS sur les liens core
-- LDP avec `Loopback0`
+## Academic Context
 
-### Phase 2
+Developed as a university networking project at INSA Lyon, Telecommunications department. The original `NAS` repository history and contributor attribution are preserved. This is a student lab implementation; no production deployment or performance benchmark is claimed.
 
-Implémenté :
-- iBGP entre PE
-- sessions loopback à loopback
-- address-family `vpnv4`
-- `send-community both`
+## Problem Statement
 
-### Phase 3
+Configuring addressing, OSPF, MPLS, BGP and VRFs manually across several routers makes repeated lab experiments slow and prone to inconsistencies. An explicit intent model provides one source for deterministic configuration generation and a limited comparison with existing router state.
 
-Implémenté :
-- ajout des CE
-- création des VRF
-- association VRF aux interfaces PE-CE
-- eBGP PE-CE
-- annonces des réseaux clients
+## Features
 
-### Phase 4.a
+| Phase | Implemented behavior |
+| --- | --- |
+| 0 — Provider setup | Allocate `/30` core links and `/32` loopbacks; configure interfaces, OSPFv2 and router IDs. |
+| 1 — MPLS | Enable CEF, LDP and MPLS on designated core interfaces. |
+| 2 — VPN transport | Configure loopback-based iBGP between PEs, the `vpnv4` address family and community exchange. |
+| 3 — Customers | Create VRFs with RD/RT values, attach PE–CE interfaces, configure eBGP, and advertise customer LANs, CE loopbacks and PE–CE prefixes. |
+| 4.a — Partial reconciliation | Parse running configurations and generate targeted changes for PE VRFs/customer interfaces and CE interfaces/BGP, including CE AS changes. |
 
-Partiellement implémenté :
-- lecture du `running-config`
-- calcul de diff
-- push ciblé des commandes de convergence
-- mise à jour incrémentale du customer onboarding sans wipe global
-- changement d'AS BGP local côté CE sans reload
+The tool also merges phase outputs into full configurations, exports addressing as JSON, discovers console ports from the `.gns3` file, retries console operations, and runs router jobs in parallel.
 
-Non implémenté à ce stade :
-- convergence incrémentale complète du core provider
-- gestion incrémentale de tous les services phase 4
+## Technologies
 
-## Commandes utiles
+Python, JSON, GNS3/Dynamips, Cisco IOS console commands, IPv4, OSPFv2, MPLS/LDP, MP-BGP `vpnv4`, eBGP and VRFs. The Python standard library implements the generators and console workflow. Python 3.13+ additionally needs `standard-telnetlib`, declared in `requirements.txt`, because [Python removed `telnetlib`](https://docs.python.org/3/library/telnetlib.html).
 
-### Générer toutes les configurations
+## Architecture
 
-```powershell
+```mermaid
+flowchart LR
+    I[configs/intent.json] --> G[Phase generators]
+    G --> C[generated_configs/]
+    G --> V[intent_visualization.json]
+    L[labs/network-lab.gns3] --> T[Console discovery and Telnet deployment]
+    C --> T
+    T --> R[GNS3 IOS routers]
+    R --> S[Running configuration parser]
+    I --> D[Desired customer state]
+    S --> X[Phase 4.a diff]
+    D --> X
+    X --> T
+```
+
+```mermaid
+graph LR
+    CE1[CE1 · CUST1] --- PE1
+    CE3[CE3 · CUST2] --- PE1
+    PE1 --- P1 --- P2 --- PE2
+    PE2 --- CE2[CE2 · CUST2]
+    PE2 --- CE4[CE4 · CUST2]
+```
+
+Configuration paths are resolved from the repository, independently of the shell working directory. The original JSON keys, including `routeurs`, remain compatible with the existing intent model.
+
+## Installation
+
+Python 3.10+ is needed by the code; local verification covered Python 3.12 and 3.14. On Fedora, from the repository directory:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+```
+
+Generation needs no GNS3 server. Deployment requires GNS3/Dynamips and lawfully obtained IOS images. The supplied topology references a Cisco 7200 IOS image; no image or runtime files are distributed. Import `labs/network-lab.gns3` and adapt image paths and console ports to your local lab.
+
+## Usage
+
+Generate all phases and full configurations without contacting routers:
+
+```bash
 python config_auto.py
+python config_auto.py --help
 ```
 
-Effet :
-- génère les configurations par phase dans `generated_configs/`
-- génère les configurations complètes `*_full.cfg`
-- régénère `intent_visualization.json`
+Edit `configs/intent.json` to change the lab intent. Outputs go to the ignored `generated_configs/` directory and `intent_visualization.json`. A representative generated PE configuration is included in [`examples/PE1_full.cfg`](examples/PE1_full.cfg).
 
-### Déployer les phases dans l'ordre
+Deploy into a disposable lab:
 
-```powershell
-python config_auto.py --push-phases --project projet_NAS_GNS.gns3
+```bash
+python config_auto.py --push-phases --project labs/network-lab.gns3
+python config_auto.py --push-full PE1 --project labs/network-lab.gns3
+python config_auto.py --push-full ALL --project labs/network-lab.gns3 --workers 4
 ```
 
-Effet :
-- nettoie le runtime Dynamips
-- efface les `startup-config`
-- pousse les phases 0, 1, 2 puis 3
+Full/phased deployments erase targeted startup configurations. `--push-phases` and `--push-full ALL` also remove saved Dynamips runtime files under the selected project's directory. A single-router full push only resets its target. The reset does not reload routers or guarantee that an old running configuration is empty.
 
-### Déployer la configuration complète sur tous les routeurs
+For the implemented incremental customer workflow:
 
-```powershell
-python config_auto.py --push-full ALL --project projet_NAS_GNS.gns3
+```bash
+python config_auto.py --reconcile-phase4a ALL --project labs/network-lab.gns3
+python telnet_push.py PE1 --suffix full --project labs/network-lab.gns3
 ```
 
-### Déployer la configuration complète sur un seul routeur
+Reconciliation can remove VRFs, interfaces or BGP settings absent from the intent. Use it only where the intent owns those lab resources. Telnet is unencrypted and intended for isolated local consoles. If an enable password is required, set `GNS3_ENABLE_PASSWORD` in the shell; `--enable-pass` remains supported.
 
-```powershell
-python config_auto.py --push-full PE1 --project projet_NAS_GNS.gns3
+## Project Structure
+
+```text
+network_automation/   Generation, desired state, reconciliation and Telnet modules
+configs/              Lab intent
+labs/                 GNS3 topology, without IOS images
+examples/             Reviewed lab configuration example
+docs/                 Audit, migration and verification notes
+tests/                Offline protocol, reconciliation and deployment-scope tests
+config_auto.py        Main command, retained for compatibility
+telnet_push.py         Manual deployment command, retained for compatibility
 ```
 
-### Réconcilier la phase 4.a sans reload ni wipe global
+The other original executable script names remain as small entry points; implementations live in `network_automation/`.
 
-Tous les routeurs :
+## Verification
 
-```powershell
-python config_auto.py --reconcile-phase4a ALL --project projet_NAS_GNS.gns3
+```bash
+python -m pytest -q
+ruff check .
+ruff format --check .
 ```
 
-Un seul routeur :
+Offline tests cover address allocation, protocol output, console discovery, reconciliation stability, CE AS changes, shutdown interfaces, and single-router reset scope. During migration, all 24 generated phase/full files were compared with the original tracked outputs and were byte-for-byte identical.
 
-```powershell
-python config_auto.py --reconcile-phase4a CE2 --project projet_NAS_GNS.gns3
-```
+## Limitations
 
-Effet :
-- lit le `running-config` courant
-- calcule le diff avec l'état désiré issu de `intent.json`
-- pousse uniquement les commandes nécessaires
-- ne fait ni `erase startup-config`, ni nettoyage GNS3, ni reload
-
-### Pousser manuellement un fichier généré
-
-```powershell
-python telnet_push.py PE1 --suffix full --project projet_NAS_GNS.gns3
-```
-
-Suffixes utiles :
-- `phase0_setup`
-- `phase1_mpls`
-- `phase2_vpnv4`
-- `phase3_clients`
-- `full`
-- `reconcile_phase4a`
-
-### Utiliser plusieurs workers en parallèle
-
-```powershell
-python config_auto.py --push-full ALL --project projet_NAS_GNS.gns3 --workers 4
-```
-
-Ou :
-
-```powershell
-python config_auto.py --reconcile-phase4a ALL --project projet_NAS_GNS.gns3 --workers 4
-```
-
-### Fournir un mot de passe `enable`
-
-```powershell
-python config_auto.py --push-full ALL --project projet_NAS_GNS.gns3 --enable-pass monmotdepasse
-```
-
-## Modèle d'intention
-
-Le réseau est décrit dans `intent.json`.
-
-La source de vérité actuelle est :
-- `loopback_index` pour les routeurs provider `PE` et `P`
-- `ce_loopback_index` pour les routeurs `CE`
-- `ce_as` pour l'AS BGP local des clients
-- `vrfs` pour les RD et RT
-- `links` pour les liens core et PE-CE
-- `customer_sites` pour les LAN clients
-
-## Fonctionnalités implémentées
-
-### Réseau
-
-- topologie provider `PE1 - P1 - P2 - PE2`
-- ajout de 4 CE
-- adressage automatique des liens core
-- adressage automatique des liens PE-CE
-- adressage automatique des LAN clients
-- loopbacks provider calculées depuis `loopback_index`
-- loopbacks CE calculées depuis `ce_loopback_index`
-- `router-id` provider dérivé automatiquement de `Loopback0`
-- OSPFv2 dans le core
-- MPLS dans le core
-- LDP avec `Loopback0`
-- iBGP `vpnv4` entre PE via les loopbacks
-- VRF sur les PE
-- association VRF aux interfaces PE-CE
-- eBGP PE-CE
-- annonces des LAN clients
-- annonces des loopbacks CE
-
-### Automatisation
-
-- génération des configurations par phase
-- génération d'une configuration complète fusionnée par routeur
-- génération de `intent_visualization.json`
-- push Telnet automatique sur les consoles GNS3
-- découverte des ports console via le fichier `.gns3`
-- push parallèle sur plusieurs routeurs
-- nettoyage runtime Dynamips pour les déploiements complets
-- reset des `startup-config` pour les déploiements complets
-- réconciliation incrémentale partielle sans wipe global
-
-## Récapitulatif des phases
-
-### Phase 0 : setup
-
-Allocation des adresses core et des loopbacks provider, configuration des interfaces, puis construction d'OSPF sur les routeurs `PE` et `P`.
-
-### Phase 1 : core MPLS
-
-Activation de `ip cef`, configuration LDP avec `Loopback0` comme identité MPLS, puis activation de `mpls ip` sur les interfaces core.
-
-### Phase 2 : core BGP/MPLS VPN
-
-Configuration des sessions iBGP entre les PE via les loopbacks, puis activation de l'address-family `vpnv4` avec échange des communautés étendues.
-
-### Phase 3 : customer onboarding
-
-Création des VRF sur les PE, association des interfaces PE-CE aux bonnes VRF, configuration eBGP PE-CE, puis annonce des LAN clients et des loopbacks CE.
-
-### Phase 4.a : mise à jour sans reload
-
-Lecture de la configuration courante des routeurs ciblés, reconstruction de l'état désiré depuis `intent.json`, calcul des différences utiles, puis push des seules commandes nécessaires pour converger vers la nouvelle intention sans `erase startup-config` ni reload.
+- Phase 4.a does not reconcile the whole provider core or all possible IOS services. Its parser supports only the implemented configuration subset.
+- Intent flags such as `bgp.enabled` and `mpls.enabled` are not general feature switches; the generators implement the supplied phased lab assumptions.
+- Console deployment uses prompt heuristics and does not validate every IOS command response. Logged completion is not proof of routing convergence; some parallel failures are reported in logs rather than by an aggregate failing exit status.
+- Address allocation and interface assumptions are designed for this small IPv4 topology.
+- Live deployment, routing convergence and connectivity were not verified during this migration because GNS3 and IOS runtime images were unavailable.
+- Publication rights and licensing must be confirmed with the contributors before adding a license. None has been invented.
