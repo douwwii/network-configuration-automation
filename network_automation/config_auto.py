@@ -85,6 +85,13 @@ def run_parallel_router_jobs(
     return results
 
 
+def raise_for_failed_jobs(results: list[tuple[str, Exception | None]], operation: str) -> None:
+    """Stop a deployment stage if any router job failed."""
+    failed = [router for router, error in results if error is not None]
+    if failed:
+        raise RuntimeError(f"{operation} failed on: {', '.join(sorted(failed))}")
+
+
 def trim_footer(lines: list[str]) -> list[str]:
     trimmed = list(lines)
     while trimmed and trimmed[-1] in {"write memory", "end", "!"}:
@@ -169,6 +176,7 @@ def push_in_order(
                 print(f"Pushed {router_name} {phase_name}")
             else:
                 print(f"Failed {router_name} {phase_name}: {error}")
+        raise_for_failed_jobs(results, phase_name)
 
 
 def reset_pushable_routers(
@@ -194,6 +202,7 @@ def reset_pushable_routers(
             print(f"Reset {router_name}")
         else:
             print(f"Failed reset {router_name}: {error}")
+    raise_for_failed_jobs(results, "Router reset")
 
 
 def collect_running_configs(
@@ -235,7 +244,10 @@ def reconcile_phase4a(
     target: str,
 ) -> None:
     intent = load_intent()
-    target_routers = sorted(intent["routeurs"]) if target == "ALL" else [target]
+    managed = sorted(name for name, router in intent["routeurs"].items() if router["role"] in {"PE", "CE"})
+    if target != "ALL" and target not in managed:
+        raise ValueError(f"{target}: phase 4.a supports only known PE and CE routers")
+    target_routers = managed if target == "ALL" else [target]
     pushable, skipped = pushable_routers({router_name: [] for router_name in target_routers}, project_path)
     for router_name, reason in skipped:
         print(f"Skipped {router_name} reconcile_phase4a: {reason}")
@@ -271,22 +283,24 @@ def reconcile_phase4a(
             print(f"Reconciled {router_name}")
         else:
             print(f"Failed reconcile {router_name}: {error}")
+    raise_for_failed_jobs(results, "Phase 4.a reconciliation")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate phased configs and optionally push them to GNS in validation order."
     )
-    parser.add_argument(
+    deployment = parser.add_mutually_exclusive_group()
+    deployment.add_argument(
         "--push-phases",
         action="store_true",
         help="Push Phase 0, then Phase 1, then Phase 2, then Phase 3 through Telnet.",
     )
-    parser.add_argument(
+    deployment.add_argument(
         "--push-full",
         help="Push the final full config of one router or ALL routers.",
     )
-    parser.add_argument(
+    deployment.add_argument(
         "--reconcile-phase4a",
         help="Read current running-config and reconcile customer onboarding resources for one router or ALL routers.",
     )
@@ -348,6 +362,7 @@ def main() -> None:
                     print(f"Pushed {router_name} full")
                 else:
                     print(f"Failed {router_name} full: {error}")
+            raise_for_failed_jobs(results, "Full deployment")
         else:
             router_console(project_path, args.push_full)
             reset_router_before_push(args.push_full, project_path, args.host, args.enable_pass)

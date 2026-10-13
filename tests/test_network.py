@@ -95,3 +95,58 @@ def test_generation_from_another_working_directory(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     assert len(config_auto.build_full_configs(load_intent())) == 8
     assert Path(DEFAULT_PROJECT).is_file()
+
+
+def test_failed_phase_stops_later_deployment_stages(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(config_auto, "pushable_routers", lambda *_: (["PE1", "P1"], []))
+
+    def push(router, phase, *_):
+        calls.append((router, phase))
+        if router == "P1":
+            raise OSError("simulated console failure")
+
+    monkeypatch.setattr(config_auto, "push_router_config", push)
+    with pytest.raises(RuntimeError, match="phase0_setup failed on: P1"):
+        config_auto.push_in_order(
+            {"phase0_setup": {}, "phase1_mpls": {}},
+            ["phase0_setup", "phase1_mpls"],
+            tmp_path / "lab.gns3",
+            "127.0.0.1",
+            "",
+            1,
+        )
+    assert calls == [("PE1", "phase0_setup"), ("P1", "phase0_setup")]
+
+
+def test_failed_reset_aborts_deployment(monkeypatch, tmp_path):
+    monkeypatch.setattr(config_auto, "pushable_routers", lambda *_: (["PE1"], []))
+
+    def fail_reset(*_):
+        raise OSError("reset failed")
+
+    monkeypatch.setattr(config_auto, "reset_router_before_push", fail_reset)
+    with pytest.raises(RuntimeError, match="Router reset failed on: PE1"):
+        config_auto.reset_pushable_routers({"full": {}}, tmp_path / "lab.gns3", "127.0.0.1", "", 1)
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--push-phases", "--push-full", "CE1"],
+        ["--push-full", "CE1", "--reconcile-phase4a", "ALL"],
+    ],
+)
+def test_conflicting_deployment_modes_are_rejected_before_generation(monkeypatch, flags):
+    monkeypatch.setattr(sys, "argv", ["config_auto.py", *flags])
+    monkeypatch.setattr(config_auto, "generate_all_configs", lambda: pytest.fail("generation started"))
+    with pytest.raises(SystemExit) as error:
+        config_auto.main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("target", ["MISSING", "P1"])
+def test_invalid_reconciliation_target_is_rejected_before_console_access(monkeypatch, tmp_path, target):
+    monkeypatch.setattr(config_auto, "collect_running_configs", lambda *_: pytest.fail("console accessed"))
+    with pytest.raises(ValueError, match="only known PE and CE"):
+        config_auto.reconcile_phase4a(tmp_path / "lab.gns3", "127.0.0.1", "", 1, target)
