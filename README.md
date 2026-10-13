@@ -24,7 +24,7 @@ Configuring addressing, OSPF, MPLS, BGP and VRFs manually across several routers
 | 3 — Customers | Create VRFs with RD/RT values, attach PE–CE interfaces, configure eBGP, and advertise customer LANs, CE loopbacks and PE–CE prefixes. |
 | 4.a — Partial reconciliation | Parse running configurations and generate targeted changes for PE VRFs/customer interfaces and CE interfaces/BGP, including CE AS changes. |
 
-The tool also merges phase outputs into full configurations, exports addressing as JSON, discovers console ports from the `.gns3` file, retries console operations, and runs router jobs in parallel.
+The tool also merges phase outputs into full configurations, exports addressing as JSON, discovers console ports from the `.gns3` file, retries console operations, and runs router jobs in parallel. Deployment modes are mutually exclusive; a failed reset or phase stops subsequent stages.
 
 ## Technologies
 
@@ -109,13 +109,15 @@ labs/                 GNS3 topology, without IOS images
 examples/             Reviewed lab configuration example
 docs/                 Audit, migration and verification notes
 tests/                Offline protocol, reconciliation and deployment-scope tests
-config_auto.py        Main command, retained for compatibility
+config_auto.py         Main command, retained for compatibility
 telnet_push.py         Manual deployment command, retained for compatibility
 ```
 
 The other original executable script names remain as small entry points; implementations live in `network_automation/`.
 
 ## Verification
+
+GitHub Actions runs the tests, Ruff lint and formatting checks on pushes and pull requests, using Python 3.12.
 
 ```bash
 python -m pytest -q
@@ -129,7 +131,7 @@ Offline tests cover address allocation, protocol output, console discovery, reco
 
 - Phase 4.a does not reconcile the whole provider core or all possible IOS services. Its parser supports only the implemented configuration subset.
 - Intent flags such as `bgp.enabled` and `mpls.enabled` are not general feature switches; the generators implement the supplied phased lab assumptions.
-- Console deployment uses prompt heuristics and does not validate every IOS command response. Logged completion is not proof of routing convergence; some parallel failures are reported in logs rather than by an aggregate failing exit status.
+- Console deployment uses prompt heuristics and does not validate every IOS command response. Router job failures stop the deployment stage and produce a failing exit status, but completion still does not prove routing convergence.
 - Address allocation and interface assumptions are designed for this small IPv4 topology.
 - Live deployment, routing convergence and connectivity were not verified during this migration because GNS3 and IOS runtime images were unavailable.
 - Publication rights and licensing must be confirmed with the contributors before adding a license. None has been invented.

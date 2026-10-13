@@ -8,4 +8,6 @@ Corrections: declare the Python 3.13+ Telnet dependency, resolve project runtime
 
 The historical-object audit examined 104 distinct reachable blobs using token, private-key and assigned-secret patterns. No matching secret was found; this limited scan is not a proof that no secret exists. Private IP ranges and AS values belong to the supplied academic lab. IOS binaries were absent from tracked files and are now explicitly ignored.
 
-Renaming the GitHub repository and pushing the prepared branch require the owner's explicit approval. The local origin fetch URL initially retains `douwwii/NAS`; its push URL is disabled until approval. No remote was renamed, archived, deleted or pushed by this migration.
+The original history is retained without force pushes. The owner requested public publication under `douwwii/network-configuration-automation`; the local origin is updated when that rename is applied. No original history or contributor attribution is removed.
+
+Final review makes deployment modes mutually exclusive and stops subsequent stages after failed router jobs. Offline regression tests cover those failure paths.
